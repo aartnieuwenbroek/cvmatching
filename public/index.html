@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CV Matcher — Extra Talent</title>
+  <link href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Mulish',sans-serif;background:#f4f6fa;color:#1B2B4B;min-height:100vh}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    .spin{animation:spin .7s linear infinite}
+    .fade{animation:fadeUp .4s ease both}
+    textarea,input,button{font-family:inherit}
+  </style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useRef } = React;
+
+// Kleuren
+const navy = "#1B2B4B", orange = "#E8506A", green = "#2ECC8A",
+      blue = "#2F6BFF", gray = "#8494AB", border = "#D6DEEB",
+      bg = "#f4f6fa", white = "#ffffff", textMuted = "#5A6E8C";
+
+// API via server proxy — geen API key nodig in de browser
+async function callClaude(messages, tools=[], system="", maxTokens=2000) {
+  const body = { model:"claude-sonnet-4-6", max_tokens:maxTokens, messages };
+  if (system) body.system = system;
+  if (tools.length) body.tools = tools;
+
+  const res = await fetch("/api/claude", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const text = await res.text();
+  if (!text || !text.trim()) throw new Error("Lege response van server (HTTP "+res.status+"). Is ANTHROPIC_API_KEY ingesteld in Vercel → Settings → Environment Variables?");
+  const data = JSON.parse(text);
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  return data;
+}
+
+async function callHaiku(messages, tools=[], system="", maxTokens=1500) {
+  const body = { model:"claude-haiku-4-5-20251001", max_tokens:maxTokens, messages };
+  if (system) body.system = system;
+  if (tools.length) body.tools = tools;
+
+  const res = await fetch("/api/claude", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const text = await res.text();
+  if (!text || !text.trim()) throw new Error("Lege response (HTTP "+res.status+")");
+  const data = JSON.parse(text);
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  return data;
+}
+
+const webSearch = [{ type:"web_search_20250305", name:"web_search" }];
+
+function getText(data) {
+  return (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+}
+
+function parseJSON(text) {
+  const clean = (text||"").replace(/```json|```/g,"").trim();
+  for (const [a,z] of [["[","]"],["{","}"]]) {
+    const i=clean.indexOf(a), j=clean.lastIndexOf(z);
+    if (i!==-1&&j>i) try{ return JSON.parse(clean.slice(i,j+1)); }catch(_){}
+  }
+  return null;
+}
+
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+const BUREAUS = ["randstad","yacht","hays","brunel","manpower","adecco","michael page","robert half","tempo-team","undutchables","unique","olympia","staffing","detachering","uitzend","recruitment"];
+const isBureau = name => BUREAUS.some(b=>(name||"").toLowerCase().includes(b));
+
+// ── Components ──────────────────────────────────────────────────────────────
+
+function Logo({ light }) {
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:"2px",fontWeight:900,fontSize:"20px",letterSpacing:"-0.5px"}}>
+      <span style={{color:light?"#fff":navy}}>Extra </span>
+      <span style={{color:orange}}>Talent</span>
+    </div>
+  );
+}
+
+function Tag({ color, bg, children }) {
+  return <span style={{background:bg,border:`1px solid ${color}44`,borderRadius:"99px",padding:"4px 13px",fontSize:"12px",fontWeight:700,color}}>{children}</span>;
+}
+
+function Card({ children, style={} }) {
+  return <div style={{background:white,borderRadius:"14px",padding:"28px",boxShadow:"0 2px 16px rgba(27,43,75,0.07)",border:`1px solid ${border}`,...style}}>{children}</div>;
+}
+
+function StatusRow({ text, done }) {
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:"10px",padding:"9px 0",borderBottom:`1px solid ${bg}`,fontSize:"14px",color:done?green:navy,fontWeight:done?700:500}}>
+      {done
+        ? <span style={{color:green,fontSize:"15px",flexShrink:0}}>✓</span>
+        : <div style={{width:"13px",height:"13px",border:`2px solid ${border}`,borderTopColor:orange,borderRadius:"50%",flexShrink:0}} className="spin"/>
+      }
+      {text}
+    </div>
+  );
+}
+
+function JobCard({ job, i }) {
+  const [open, setOpen] = useState(false);
+  const m = job.match||0;
+  const mc = m>=80?green:m>=60?blue:orange;
+  return (
+    <div className="fade" style={{background:white,border:`1px solid ${open?orange:border}`,borderRadius:"12px",marginBottom:"10px",overflow:"hidden",transition:"border-color .2s",animationDelay:i*.05+"s"}}
+      onMouseEnter={e=>e.currentTarget.style.borderColor=orange}
+      onMouseLeave={e=>{if(!open)e.currentTarget.style.borderColor=border}}
+    >
+      <div style={{padding:"16px 20px",cursor:"pointer",display:"flex",gap:"12px",alignItems:"flex-start"}} onClick={()=>setOpen(!open)}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:"15px",fontWeight:800,color:navy,marginBottom:"2px"}}>{job.title}</div>
+          <div style={{fontSize:"13px",color:orange,fontWeight:700}}>{job.company}</div>
+          <div style={{fontSize:"12px",color:textMuted,marginTop:"2px"}}>📍 {job.location||""}{job.distance_km?" · "+job.distance_km+" km":""}</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:"5px",flexShrink:0}}>
+          {m>0&&<span style={{background:mc+"18",border:`1px solid ${mc}55`,borderRadius:"20px",padding:"2px 9px",fontSize:"11px",fontWeight:800,color:mc}}>{m}% match</span>}
+          <span style={{background:"#E8F9F3",border:`1px solid ${green}44`,borderRadius:"20px",padding:"2px 9px",fontSize:"11px",fontWeight:700,color:green}}>✓ Direct</span>
+          <span style={{color:gray,fontSize:"14px",transform:open?"rotate(180deg)":"none",transition:"transform .2s",display:"inline-block"}}>▾</span>
+        </div>
+      </div>
+      {open&&(
+        <div style={{padding:"0 20px 16px",borderTop:`1px solid ${bg}`,paddingTop:"12px"}}>
+          {job.why_match&&<div style={{background:"rgba(232,80,106,0.05)",border:"1px solid rgba(232,80,106,0.15)",borderRadius:"8px",padding:"9px 13px",marginBottom:"10px",fontSize:"13px",lineHeight:1.6}}><strong style={{color:orange}}>Waarom passend: </strong>{job.why_match}</div>}
+          {job.description&&<p style={{fontSize:"13px",color:textMuted,lineHeight:1.7,marginBottom:"10px"}}>{job.description}</p>}
+          {(job.skills||[]).length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"10px"}}>{job.skills.map((s,i)=><span key={i} style={{background:bg,borderRadius:"6px",padding:"3px 9px",fontSize:"11px",color:textMuted,fontWeight:600}}>{s}</span>)}</div>}
+          {job.url&&<a href={job.url} target="_blank" rel="noreferrer" style={{display:"inline-block",background:navy,color:"#fff",borderRadius:"8px",padding:"7px 16px",fontSize:"13px",fontWeight:800,textDecoration:"none"}} onMouseEnter={e=>e.currentTarget.style.background=orange} onMouseLeave={e=>e.currentTarget.style.background=navy}>Bekijk vacature →</a>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main App ─────────────────────────────────────────────────────────────────
+
+function App() {
+  const [screen, setScreen] = useState("upload"); // upload | working | results
+  const [cvText, setCvText] = useState("");
+  const [pdfData, setPdfData] = useState(null);
+  const [fileName, setFileName] = useState(null);
+  const [status, setStatus] = useState([]);
+  const [profile, setProfile] = useState(null);
+  const [jobs, setJobs] = useState([]);
+  const [error, setError] = useState("");
+  const fileRef = useRef();
+
+  const log = text => setStatus(p => {
+    if (p.length && !p[p.length-1].done) { const u=[...p]; u[u.length-1]={text,done:false}; return u; }
+    return [...p,{text,done:false}];
+  });
+  const done = text => setStatus(p => {
+    if (!p.length) return [{text,done:true}];
+    const u=[...p]; u[u.length-1]={text,done:true}; return u;
+  });
+
+  const handleFile = async f => {
+    if (!f) return;
+    setFileName(f.name);
+    if (f.name.toLowerCase().endsWith(".pdf") || f.type==="application/pdf") {
+      const buf = await f.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin=""; for(let i=0;i<bytes.length;i++) bin+=String.fromCharCode(bytes[i]);
+      setPdfData(btoa(bin)); setCvText("");
+    } else {
+      setCvText(await f.text()); setPdfData(null);
+    }
+  };
+
+  const start = async () => {
+    if (!cvText.trim() && !pdfData) return;
+    setScreen("working"); setStatus([]); setJobs([]); setError(""); setProfile(null);
+
+    try {
+      // ── 1. Analyseer CV ──────────────────────────────────────────────────
+      log("CV analyseren…");
+      const prompt = `Analyseer dit CV en geef ALLEEN deze JSON terug (geen uitleg, geen markdown):
+{"name":"","location":"(woonplaats)","current_title":"(recentste functie)","hard_skills":["max 6"],"soft_skills":["max 4"],"experience_years":0,"personality_summary":"(1 zin werkstijl)","search_queries":["3 NL zoektermen bijv. customer service logistiek Rotterdam"],"summary":"(1 zin)"}`;
+
+      const analysisMsg = pdfData
+        ? [{role:"user",content:[{type:"document",source:{type:"base64",media_type:"application/pdf",data:pdfData}},{type:"text",text:prompt}]}]
+        : [{role:"user",content:prompt+"\n\nCV:\n"+cvText.slice(0,4000)}];
+
+      const analysis = await callClaude(analysisMsg,[],"Je bent HR-consultant. Geef alleen geldige JSON.",2000);
+      const prof = parseJSON(getText(analysis));
+      if (!prof) throw new Error("CV-analyse mislukt. Probeer de tekst te plakken in plaats van PDF te uploaden.");
+      setProfile(prof);
+      done("Profiel: "+prof.current_title+" · "+prof.location);
+
+      // ── 2. Zoek vacatures (Haiku + websearch, 1 grote call) ───────────────
+      const location = prof.location || "Nederland";
+      const skills = (prof.hard_skills||[]).slice(0,5).join(", ");
+      const queries = (prof.search_queries||[prof.current_title+" "+location]).slice(0,3);
+
+      log("62s wachten zodat rate-limit teller leeg is…");
+      for (let s=62;s>0;s--) { log(`Zoeken start over ${s}s…`); await sleep(1000); }
+
+      log("Vacatures zoeken…");
+      const searchPrompt = `Zoek actuele openstaande vacatures voor kandidaat:
+Functie: ${prof.current_title}, skills: ${skills}, woonplaats: ${location} (max 30km).
+Zoektermen: "${queries.join('", "')}"
+Doorzoek: indeed.nl, nationale-vacaturebank.nl, linkedin.com/jobs, werkenbij-sites.
+Alleen directe werkgevers — NIET: ${BUREAUS.slice(0,6).join(", ")}.
+Geef JSON array, max 10 vacatures:
+[{"title":"","company":"","location":"","distance_km":0,"description":"(2 zinnen)","url":""}]
+Geen resultaten: []`;
+
+      const search = await callHaiku([{role:"user",content:searchPrompt}], webSearch,
+        "Zoek via websearch naar actuele vacatures. Alleen directe werkgevers. JSON array.", 2000);
+
+      const found = parseJSON(getText(search));
+      const vacatures = Array.isArray(found) ? found.filter(j=>!isBureau(j.company)) : [];
+      done(vacatures.length+" vacature(s) gevonden");
+
+      if (vacatures.length === 0) {
+        // Fallback met andere zoekterm
+        log("Tweede poging met andere zoektermen…");
+        await sleep(62000);
+        const fallback = await callHaiku(
+          [{role:"user",content:`Zoek vacatures voor "${prof.current_title}" in regio ${location} (30km). Directe werkgevers. JSON array max 8: [{"title":"","company":"","location":"","distance_km":0,"description":"","url":""}]`}],
+          webSearch, "Zoek vacatures. JSON array.", 2000
+        );
+        const found2 = parseJSON(getText(fallback));
+        if (Array.isArray(found2)) vacatures.push(...found2.filter(j=>!isBureau(j.company)));
+        done(vacatures.length+" vacature(s) gevonden (2e poging)");
+      }
+
+      // ── 3. Match scoring ─────────────────────────────────────────────────
+      if (vacatures.length > 0) {
+        log("Match-scores berekenen…");
+        const scorePrompt = `Geef match-score 0-100 en why_match voor elk, kandidaat: ${prof.current_title}, skills: ${skills}.
+Vacatures: ${JSON.stringify(vacatures.slice(0,12).map((j,i)=>({i,title:j.title,company:j.company,desc:(j.description||"").slice(0,80)})))}
+JSON: [{"i":0,"match":85,"why_match":"1 zin","skills":["skill"]}]`;
+        try {
+          const scored = await callClaude([{role:"user",content:scorePrompt}],[],"HR specialist. Alleen JSON array.",800);
+          const scores = parseJSON(getText(scored));
+          if (Array.isArray(scores)) scores.forEach(s=>{ if(vacatures[s.i]){vacatures[s.i].match=s.match;vacatures[s.i].why_match=s.why_match;if(s.skills)vacatures[s.i].skills=s.skills;}});
+        } catch(_){}
+        done("Match-scores berekend");
+      }
+
+      setJobs(vacatures.sort((a,b)=>(b.match||0)-(a.match||0)));
+      setScreen("results");
+
+    } catch(e) {
+      setError(e.message);
+      setScreen("results");
+    }
+  };
+
+  const reset = () => { setScreen("upload"); setCvText(""); setPdfData(null); setFileName(null); setStatus([]); setJobs([]); setError(""); setProfile(null); };
+
+  return (
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
+
+      {/* Nav */}
+      <nav style={{background:navy,padding:"0 28px",height:"60px",display:"flex",alignItems:"center",boxShadow:"0 2px 10px rgba(27,43,75,0.2)"}}>
+        <Logo light/>
+      </nav>
+
+      {/* Hero */}
+      <div style={{background:`linear-gradient(135deg,${navy} 0%,#243659 100%)`,padding:"44px 24px 50px",textAlign:"center",position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",top:"-50px",right:"-50px",width:"180px",height:"180px",borderRadius:"50%",background:"rgba(232,80,106,0.1)",pointerEvents:"none"}}/>
+        <div style={{position:"relative",zIndex:1}}>
+          <div style={{display:"inline-block",background:"rgba(232,80,106,0.15)",border:"1px solid rgba(232,80,106,0.3)",borderRadius:"99px",padding:"4px 14px",fontSize:"11px",fontWeight:800,color:orange,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"18px"}}>✦ AI Vacature Matcher</div>
+          <h1 style={{fontSize:"clamp(24px,5vw,40px)",fontWeight:900,color:"#fff",lineHeight:1.2,marginBottom:"12px"}}>De juiste mens op<br/><span style={{color:orange}}>de juiste plek.</span></h1>
+          <p style={{color:"rgba(255,255,255,0.6)",fontSize:"14px",maxWidth:"440px",margin:"0 auto 20px",lineHeight:1.75}}>Upload je CV — we analyseren werkervaring én persoonlijkheid en zoeken passende vacatures. <strong style={{color:"#fff"}}>Geregeld!</strong></p>
+          <div style={{display:"flex",justifyContent:"center",gap:"8px",flexWrap:"wrap"}}>
+            <Tag color={green} bg="rgba(46,204,138,0.12)">✓ Alleen directe werkgevers</Tag>
+            <Tag color={blue} bg="rgba(47,107,255,0.12)">📍 Binnen 30 km</Tag>
+            <Tag color={orange} bg="rgba(232,80,106,0.12)">✦ Persoonlijkheidsanalyse</Tag>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{maxWidth:"720px",margin:"0 auto",width:"100%",padding:"28px 20px 60px",flex:1}}>
+
+        {screen==="upload"&&(
+          <div className="fade">
+            <Card>
+              <h2 style={{fontSize:"17px",fontWeight:800,color:navy,marginBottom:"20px"}}>Upload je CV</h2>
+
+              <div onDrop={e=>{e.preventDefault();handleFile(e.dataTransfer.files[0]);}} onDragOver={e=>e.preventDefault()} onClick={()=>fileRef.current.click()}
+                style={{border:`2px dashed ${border}`,borderRadius:"12px",padding:"28px",textAlign:"center",cursor:"pointer",background:bg,transition:"all .2s",marginBottom:"18px"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=orange;e.currentTarget.style.background="rgba(232,80,106,0.03)";}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=border;e.currentTarget.style.background=bg;}}
+              >
+                <input ref={fileRef} type="file" accept=".txt,.pdf,.docx" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
+                <div style={{fontSize:"28px",marginBottom:"8px"}}>{fileName?"📄":"⬆️"}</div>
+                {fileName
+                  ? <div><div style={{color:orange,fontWeight:700}}>{fileName}</div><div style={{fontSize:"12px",color:gray,marginTop:"3px"}}>Klik om te wijzigen</div></div>
+                  : <div><div style={{fontWeight:700,color:navy,marginBottom:"3px"}}>Sleep je CV hierheen</div><div style={{fontSize:"13px",color:gray}}>of klik · .txt · .pdf · .docx</div></div>
+                }
+              </div>
+
+              <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"14px"}}>
+                <div style={{flex:1,height:"1px",background:border}}/><span style={{fontSize:"12px",color:gray,fontWeight:600}}>of plak als tekst</span><div style={{flex:1,height:"1px",background:border}}/>
+              </div>
+
+              <textarea value={cvText} onChange={e=>{setCvText(e.target.value);setFileName(null);setPdfData(null);}}
+                placeholder="Plak hier je volledige CV-tekst inclusief werkervaring en persoonlijkheidstekst…"
+                style={{width:"100%",minHeight:"160px",background:bg,border:`1.5px solid ${border}`,borderRadius:"10px",padding:"13px 15px",color:navy,fontSize:"14px",resize:"vertical",outline:"none",lineHeight:1.6,transition:"border-color .2s"}}
+                onFocus={e=>e.target.style.borderColor=orange} onBlur={e=>e.target.style.borderColor=border}
+              />
+
+              <button onClick={start} disabled={!cvText.trim()&&!pdfData}
+                style={{width:"100%",marginTop:"14px",padding:"14px",background:(cvText.trim()||pdfData)?orange:"#E8EDF5",color:(cvText.trim()||pdfData)?"#fff":gray,border:"none",borderRadius:"10px",fontSize:"15px",fontWeight:800,cursor:(cvText.trim()||pdfData)?"pointer":"not-allowed",transition:"all .2s"}}
+                onMouseEnter={e=>{if(cvText.trim()||pdfData)e.currentTarget.style.background="#d03d57";}}
+                onMouseLeave={e=>{if(cvText.trim()||pdfData)e.currentTarget.style.background=orange;}}
+              >Analyseer &amp; zoek vacatures →</button>
+            </Card>
+          </div>
+        )}
+
+        {screen==="working"&&(
+          <div className="fade">
+            <Card>
+              <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"20px"}}>
+                <div style={{width:"10px",height:"10px",borderRadius:"50%",background:orange,boxShadow:`0 0 0 3px rgba(232,80,106,0.2)`}} className="spin"/>
+                <h2 style={{fontSize:"17px",fontWeight:800,color:navy}}>Bezig met zoeken…</h2>
+              </div>
+              {status.map((s,i)=><StatusRow key={i} text={s.text} done={s.done}/>)}
+            </Card>
+          </div>
+        )}
+
+        {screen==="results"&&(
+          <div className="fade">
+            {/* Status log */}
+            {status.length>0&&(
+              <Card style={{marginBottom:"16px",padding:"16px 20px"}}>
+                {status.map((s,i)=><StatusRow key={i} text={s.text} done={s.done}/>)}
+              </Card>
+            )}
+
+            {/* Fout */}
+            {error&&(
+              <div style={{background:"#FFF0F0",border:"1px solid #FFCDD2",borderRadius:"12px",padding:"16px 20px",color:"#C62828",marginBottom:"16px",lineHeight:1.6,fontSize:"14px"}}>
+                <strong>Fout: </strong>{error}
+              </div>
+            )}
+
+            {/* Profiel */}
+            {profile&&(
+              <div style={{background:`linear-gradient(135deg,${navy},#243659)`,borderRadius:"14px",padding:"22px 26px",marginBottom:"20px",boxShadow:"0 6px 24px rgba(27,43,75,0.15)"}}>
+                <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",fontWeight:800,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"8px"}}>Geanalyseerd profiel</div>
+                <div style={{fontSize:"20px",fontWeight:900,color:"#fff",marginBottom:"2px"}}>{profile.name||"—"}</div>
+                <div style={{color:orange,fontSize:"14px",fontWeight:700,marginBottom:"3px"}}>{profile.current_title}</div>
+                {profile.location&&<div style={{fontSize:"12px",color:"rgba(255,255,255,0.45)",marginBottom:"12px"}}>📍 {profile.location}</div>}
+                {profile.personality_summary&&<div style={{fontSize:"13px",color:"rgba(255,255,255,0.7)",fontStyle:"italic",borderLeft:`3px solid ${orange}`,paddingLeft:"10px",marginBottom:"14px",lineHeight:1.6}}>{profile.personality_summary}</div>}
+                <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
+                  {(profile.hard_skills||[]).map((s,i)=><span key={i} style={{background:"rgba(255,255,255,0.12)",borderRadius:"6px",padding:"3px 9px",fontSize:"11px",color:"#fff",fontWeight:600}}>{s}</span>)}
+                  {(profile.soft_skills||[]).map((s,i)=><span key={i} style={{background:"rgba(232,80,106,0.2)",borderRadius:"6px",padding:"3px 9px",fontSize:"11px",color:orange,fontWeight:600}}>{s}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Vacatures */}
+            {jobs.length>0&&(
+              <>
+                <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"14px"}}>
+                  <h2 style={{fontSize:"15px",fontWeight:800,color:navy}}>{jobs.length} vacatures gevonden</h2>
+                  <div style={{flex:1,height:"1px",background:border}}/>
+                  <span style={{fontSize:"11px",color:green,fontWeight:700}}>✓ Directe werkgevers · max 30 km</span>
+                </div>
+                {jobs.map((j,i)=><JobCard key={i} job={j} i={i}/>)}
+              </>
+            )}
+
+            {jobs.length===0&&!error&&(
+              <Card style={{textAlign:"center",padding:"40px"}}>
+                <div style={{fontSize:"32px",marginBottom:"10px"}}>🔍</div>
+                <div style={{fontSize:"16px",fontWeight:800,color:navy,marginBottom:"6px"}}>Geen vacatures gevonden</div>
+                <div style={{fontSize:"13px",color:textMuted}}>Probeer het CV als tekst te plakken voor betere resultaten.</div>
+              </Card>
+            )}
+
+            <button onClick={reset} style={{marginTop:"20px",width:"100%",padding:"13px",background:"transparent",border:`1.5px solid ${border}`,borderRadius:"10px",color:textMuted,fontSize:"14px",fontWeight:700,cursor:"pointer",transition:"all .2s"}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor=navy;e.currentTarget.style.color=navy;}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor=border;e.currentTarget.style.color=textMuted;}}
+            >← Nieuw CV uploaden</button>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <footer style={{background:navy,padding:"16px 28px"}}>
+        <div style={{maxWidth:"720px",margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"8px"}}>
+          <Logo light/>
+          <span style={{fontSize:"11px",color:"rgba(255,255,255,0.3)"}}>© {new Date().getFullYear()} Extra Talent · Groei Recruitment</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("app")).render(<App/>);
+</script>
+</body>
+</html>
